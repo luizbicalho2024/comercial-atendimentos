@@ -5,8 +5,10 @@ from datetime import datetime, timedelta
 import hashlib
 from streamlit_geolocation import streamlit_geolocation
 import os
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut
 
-# Configuração da página (deve ser a primeira chamada do Streamlit)
+# Configuração da página (deve ser a primeira chamada)
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
 
 # ==========================================
@@ -16,7 +18,6 @@ st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wid
 @st.cache_resource
 def init_connection():
     try:
-        # Puxa a string de conexão dos Secrets do Streamlit Cloud
         uri = st.secrets["MONGO_URI"]
         client = pymongo.MongoClient(uri)
         return client
@@ -32,7 +33,6 @@ db = client['sistema_comercial']
 users_col = db['usuarios']
 visits_col = db['atendimentos']
 
-# Criação automática do usuário administrador inicial
 def init_admin():
     admin_email = "luiz.bicalho@rovemabank.com.br"
     if not users_col.find_one({"email": admin_email}):
@@ -45,6 +45,17 @@ def init_admin():
         })
 
 init_admin()
+
+@st.cache_data(ttl=3600)
+def get_address(lat, lon):
+    try:
+        geolocator = Nominatim(user_agent="sistema_comercial_app")
+        location = geolocator.reverse((lat, lon), exactly_one=True, timeout=10)
+        return location.address if location else "Endereço não localizado automaticamente"
+    except GeocoderTimedOut:
+        return "Tempo limite excedido ao buscar endereço"
+    except Exception:
+        return "Erro ao buscar endereço"
 
 # ==========================================
 # CONTROLE DE SESSÃO (LOGIN/LOGOUT)
@@ -71,10 +82,9 @@ def login(email, password):
         st.error("E-mail ou senha incorretos, ou usuário inativo.")
 
 def logout():
+    for key in ['logged_in', 'user_role', 'user_name', 'user_email']:
+        st.session_state[key] = None
     st.session_state.logged_in = False
-    st.session_state.user_role = None
-    st.session_state.user_name = None
-    st.session_state.user_email = None
     st.rerun()
 
 # ==========================================
@@ -85,7 +95,6 @@ def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        # Tenta carregar a logo, se não existir, mostra um título
         if os.path.exists("logo.png"):
             st.image("logo.png", use_column_width=True)
         else:
@@ -102,44 +111,81 @@ def login_page():
 
 def collaborator_page():
     st.title(f"Bem-vindo, {st.session_state.user_name}")
-    st.write("Registre seu atendimento atual abaixo.")
     
-    with st.container(border=True):
-        cliente_nome = st.text_input("Nome do Cliente")
-        observacoes = st.text_area("Observações do Atendimento")
+    tab1, tab2 = st.tabs(["📝 Registrar Atendimento", "🕰️ Meu Histórico"])
+    
+    with tab1:
+        st.markdown("### Novo Atendimento")
+        with st.container(border=True):
+            # Inputs obrigatórios
+            cliente_nome = st.text_input("Nome do Cliente *", placeholder="Ex: Mercado Silva")
+            observacoes = st.text_area("Observações do Atendimento *", placeholder="Detalhes da visita...")
+            
+            st.divider()
+            st.markdown("#### 📍 Capturar Localização GPS *")
+            st.info("Clique no botão abaixo para capturar sua localização atual. Aguarde o carregamento.")
+            
+            # Componente de GPS
+            location = streamlit_geolocation()
+            
+            endereco_atual = ""
+            lat, lon = None, None
+            
+            # Mostra dados após captura
+            if location and 'latitude' in location and location['latitude'] is not None:
+                lat = location['latitude']
+                lon = location['longitude']
+                endereco_atual = get_address(lat, lon)
+                
+                st.success("✅ Localização capturada com sucesso!")
+                st.markdown(f"**Coordenadas:** {lat}, {lon}")
+                st.markdown(f"**Endereço Aproximado:** {endereco_atual}")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            if st.button("Registrar Atendimento", type="primary", use_container_width=True):
+                if not cliente_nome.strip():
+                    st.error("O campo 'Nome do Cliente' é obrigatório.")
+                elif not observacoes.strip():
+                    st.error("O campo 'Observações' é obrigatório.")
+                elif not lat or not lon:
+                    st.error("É obrigatório capturar a localização do GPS antes de registrar.")
+                else:
+                    novo_atendimento = {
+                        "colaborador_email": st.session_state.user_email,
+                        "colaborador_nome": st.session_state.user_name,
+                        "cliente_nome": cliente_nome,
+                        "observacoes": observacoes,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "endereco": endereco_atual,
+                        "data_hora": datetime.now()
+                    }
+                    visits_col.insert_one(novo_atendimento)
+                    st.success("Atendimento registrado com sucesso!")
+                    st.balloons()
+
+    with tab2:
+        st.markdown("### Meus Últimos Atendimentos")
+        meus_atendimentos = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(50))
         
-        st.markdown("**Capturar Localização (GPS)**")
-        st.info("Clique no botão abaixo e permita o acesso à localização no seu navegador/smartphone.")
-        location = streamlit_geolocation()
-        
-        if st.button("Registrar Atendimento", type="primary"):
-            if not cliente_nome:
-                st.error("O nome do cliente é obrigatório.")
-            elif not location or 'latitude' not in location or location['latitude'] is None:
-                st.error("É obrigatório capturar a localização do GPS antes de registrar.")
-            else:
-                novo_atendimento = {
-                    "colaborador_email": st.session_state.user_email,
-                    "colaborador_nome": st.session_state.user_name,
-                    "cliente_nome": cliente_nome,
-                    "observacoes": observacoes,
-                    "latitude": location['latitude'],
-                    "longitude": location['longitude'],
-                    "data_hora": datetime.now()
-                }
-                visits_col.insert_one(novo_atendimento)
-                st.success("Atendimento registrado com sucesso!")
-                st.balloons()
+        if meus_atendimentos:
+            df_meus = pd.DataFrame(meus_atendimentos)
+            df_meus['Data/Hora'] = df_meus['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
+            df_meus = df_meus[['Data/Hora', 'cliente_nome', 'observacoes', 'endereco']]
+            df_meus.columns = ['Data/Hora', 'Cliente', 'Observações', 'Endereço']
+            st.dataframe(df_meus, use_container_width=True, hide_index=True)
+        else:
+            st.info("Você ainda não possui atendimentos registrados.")
 
 def admin_page():
     st.title("Painel do Gestor")
     
-    tab1, tab2 = st.tabs(["📊 Visualizar Atendimentos", "👥 Gerenciar Equipe"])
+    tab1, tab2, tab3 = st.tabs(["📊 Visualizar Atendimentos", "🧠 Inteligência de Dados", "👥 Gerenciar Equipe"])
     
     with tab1:
-        st.header("Histórico de Atendimentos")
+        st.header("Histórico Geral de Atendimentos")
         
-        # Filtros
         col1, col2, col3 = st.columns(3)
         with col1:
             filtro_tempo = st.selectbox("Período", ["Hoje", "Esta Semana", "Este Mês", "Todos"])
@@ -148,7 +194,6 @@ def admin_page():
             lista_nomes = ["Todos"] + [u['nome'] for u in usuarios_ativos]
             filtro_colaborador = st.selectbox("Colaborador", lista_nomes)
             
-        # Busca no banco
         query = {}
         if filtro_colaborador != "Todos":
             query["colaborador_nome"] = filtro_colaborador
@@ -168,14 +213,84 @@ def admin_page():
         
         if atendimentos:
             df = pd.DataFrame(atendimentos)
-            df['Data'] = df['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
-            df = df[['Data', 'colaborador_nome', 'cliente_nome', 'observacoes', 'latitude', 'longitude']]
-            df.columns = ['Data/Hora', 'Colaborador', 'Cliente', 'Observações', 'Latitude', 'Longitude']
+            df['Data/Hora'] = df['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
+            # Verifica se a coluna endereco existe (para registros antigos)
+            if 'endereco' not in df.columns:
+                df['endereco'] = "Endereço não registrado"
+                
+            df = df[['Data/Hora', 'colaborador_nome', 'cliente_nome', 'observacoes', 'endereco', 'latitude', 'longitude']]
+            df.columns = ['Data/Hora', 'Colaborador', 'Cliente', 'Observações', 'Endereço', 'Lat', 'Lon']
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum atendimento encontrado para os filtros selecionados.")
 
     with tab2:
+        st.header("Inteligência e KPIs")
+        
+        # Carrega todos os dados para análise
+        todos_dados = list(visits_col.find())
+        if not todos_dados:
+            st.warning("Não há dados suficientes para gerar os gráficos e mapa.")
+        else:
+            df_intel = pd.DataFrame(todos_dados)
+            
+            # Filtro por colaborador para o mapa
+            col_sel, _ = st.columns([1, 2])
+            with col_sel:
+                lista_intel = ["Todos da Equipe"] + list(df_intel['colaborador_nome'].unique())
+                colab_selecionado = st.selectbox("Analisar Colaborador (Mapa)", lista_intel)
+            
+            # Filtra DF para o mapa
+            if colab_selecionado != "Todos da Equipe":
+                df_mapa = df_intel[df_intel['colaborador_nome'] == colab_selecionado]
+            else:
+                df_mapa = df_intel
+                
+            # Mapa de calor/pontos
+            st.subheader("📍 Mapa de Atendimentos Realizados")
+            if not df_mapa.empty and 'latitude' in df_mapa.columns and 'longitude' in df_mapa.columns:
+                # O st.map precisa exatamente das colunas 'lat' e 'lon' ou 'latitude' e 'longitude'
+                map_data = df_mapa[['latitude', 'longitude']].dropna()
+                st.map(map_data, use_container_width=True)
+            else:
+                st.info("Nenhuma coordenada válida para exibir no mapa.")
+
+            st.divider()
+            
+            # Cálculos de KPIs de Períodos
+            st.subheader("📈 Desempenho e Comparativos")
+            hoje = datetime.now()
+            inicio_mes_atual = hoje.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            
+            # Calcula o início e fim do mês anterior
+            ultimo_dia_mes_anterior = inicio_mes_atual - timedelta(days=1)
+            inicio_mes_anterior = ultimo_dia_mes_anterior.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            
+            # Atendimentos Totais do Colaborador (ou Todos)
+            atendimentos_total = len(df_mapa)
+            
+            # Atendimentos Mês Atual
+            mask_mes_atual = (df_mapa['data_hora'] >= inicio_mes_atual)
+            qtd_mes_atual = len(df_mapa[mask_mes_atual])
+            
+            # Atendimentos Mês Anterior
+            mask_mes_anterior = (df_mapa['data_hora'] >= inicio_mes_anterior) & (df_mapa['data_hora'] <= ultimo_dia_mes_anterior)
+            qtd_mes_anterior = len(df_mapa[mask_mes_anterior])
+            
+            # Calcula a variação
+            delta_mes = qtd_mes_atual - qtd_mes_anterior
+
+            col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+            col_kpi1.metric("Total Histórico", atendimentos_total)
+            col_kpi2.metric("Neste Mês", qtd_mes_atual, delta=delta_mes, delta_color="normal")
+            col_kpi3.metric("Mês Anterior", qtd_mes_anterior)
+            
+            # Média diária do mês atual
+            dias_corridos = hoje.day
+            media_diaria = round(qtd_mes_atual / dias_corridos, 1) if dias_corridos > 0 else 0
+            col_kpi4.metric("Média Diária (Mês Atual)", media_diaria)
+
+    with tab3:
         st.header("Gestão de Colaboradores")
         
         with st.expander("➕ Cadastrar Novo Colaborador", expanded=False):
@@ -215,7 +330,6 @@ def admin_page():
                     status = "Ativo" if u['ativo'] else "Inativo"
                     c4.write(f"Status: **{status}**")
                     
-                    # Evita que o admin principal se desative acidentalmente
                     if u['email'] != "luiz.bicalho@rovemabank.com.br":
                         acao = "Desativar" if u['ativo'] else "Ativar"
                         if st.button(f"{acao} usuário", key=f"btn_{u['_id']}"):
@@ -226,14 +340,12 @@ def admin_page():
 # ROTEAMENTO PRINCIPAL
 # ==========================================
 
-# Adiciona botão de logout na barra lateral se estiver logado
 if st.session_state.logged_in:
     with st.sidebar:
         st.write(f"Logado como: **{st.session_state.user_name}**")
         if st.button("Sair", use_container_width=True):
             logout()
 
-# Gerencia qual tela exibir
 if not st.session_state.logged_in:
     login_page()
 else:
