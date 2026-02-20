@@ -1,64 +1,50 @@
 import streamlit as st
-from database import visits_col, get_address
+from database import visits_col, users_col, get_address, hash_pw
 from streamlit_geolocation import streamlit_geolocation
 from datetime import datetime
-import pandas as pd
 
 def render_colaborador():
     st.title(f"🚀 Painel Comercial: {st.session_state.user_name}")
-    menu = st.tabs(["📝 Novo Atendimento", "🗓️ Minha Agenda", "🕰️ Meu Histórico"])
+    # Adicionada aba de Segurança
+    menu = st.tabs(["📝 Novo Atendimento", "🗓️ Minha Agenda", "🕰️ Meu Histórico", "🔐 Segurança"])
     
-    # Busca lista de clientes para o campo de busca
     clientes_cadastrados = sorted(visits_col.distinct("cliente_nome"))
 
     with menu[0]:
         with st.container(border=True):
             st.markdown("### Registrar Visita")
-            # O st.selectbox no Streamlit já possui busca interna (digitar para filtrar)
             cliente_selecionado = st.selectbox(
-                "Pesquisar Cliente (ou selecione '+ Novo' para cadastrar)", 
-                options=["+ Novo Cliente"] + clientes_cadastrados,
-                help="Digite o nome para filtrar rapidamente"
+                "Pesquisar Cliente", 
+                options=["+ Novo Cliente"] + clientes_cadastrados
             )
             
-            cliente_nome = ""
-            if cliente_selecionado == "+ Novo Cliente":
-                cliente_nome = st.text_input("Nome da Nova Empresa *")
-            else:
-                cliente_nome = cliente_selecionado
-            
-            status = st.selectbox("Resultado da Visita *", ["Venda Realizada", "Prospecção", "Retorno Agendado", "Cliente Ausente", "Outro"])
+            cliente_nome = st.text_input("Nome da Nova Empresa *") if cliente_selecionado == "+ Novo Cliente" else cliente_selecionado
+            status = st.selectbox("Resultado *", ["Venda Realizada", "Prospecção", "Retorno Agendado", "Cliente Ausente", "Outro"])
             
             data_retorno = None
             if status == "Retorno Agendado":
-                data_retorno = st.date_input("Agendar data de retorno:", min_value=datetime.now())
+                data_retorno = st.date_input("Agendar retorno para:", min_value=datetime.now())
 
-            obs = st.text_area("Observações detalhadas *")
+            obs = st.text_area("Observações *")
             
             st.divider()
-            st.write("🛰️ **Validação de Localização**")
+            st.write("🛰️ **Validação GPS**")
             loc = streamlit_geolocation()
             
             lat, lon, ender = None, None, ""
             if loc and loc.get('latitude'):
                 acc = loc.get('accuracy', 9999)
                 if acc > 150:
-                    st.error(f"⚠️ Sinal GPS impreciso ({acc:.0f}m). Saia debaixo de coberturas e tente novamente.")
+                    st.error(f"⚠️ Sinal impreciso ({acc:.0f}m). Vá para local aberto.")
                 else:
                     lat, lon = loc['latitude'], loc['longitude']
                     ender = get_address(lat, lon)
-                    st.success(f"✅ GPS Validado!")
-                    # Exibição detalhada conforme solicitado
-                    st.markdown(f"**Lat:** `{lat}` | **Long:** `{lon}`")
-                    st.markdown(f"**Endereço capturado:** {ender}")
+                    st.success(f"✅ GPS Validado! | Lat: `{lat}` | Long: `{lon}`")
+                    st.markdown(f"**Endereço:** {ender}")
 
-            if st.button("Finalizar e Enviar", type="primary", use_container_width=True):
-                if not cliente_nome or cliente_nome == "+ Novo Cliente":
-                    st.error("Por favor, informe o nome do cliente.")
-                elif not lat:
-                    st.error("A localização GPS é obrigatória e precisa estar validada.")
-                elif not obs:
-                    st.error("Adicione uma observação sobre o atendimento.")
+            if st.button("Finalizar Registro", type="primary", use_container_width=True):
+                if not cliente_nome or not lat:
+                    st.error("Preencha o cliente e valide o GPS.")
                 else:
                     visits_col.insert_one({
                         "colaborador_email": st.session_state.user_email,
@@ -70,44 +56,48 @@ def render_colaborador():
                         "latitude": lat, "longitude": lon, "endereco": ender,
                         "data_hora": datetime.now()
                     })
-                    st.success("Atendimento registrado com sucesso!")
-                    st.balloons()
+                    st.success("Atendimento registrado!")
                     st.rerun()
 
     with menu[1]:
         st.subheader("🗓️ Retornos Agendados")
         hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        agenda = list(visits_col.find({
-            "colaborador_email": st.session_state.user_email, 
-            "data_retorno": {"$gte": hoje}
-        }).sort("data_retorno", 1))
-        
+        agenda = list(visits_col.find({"colaborador_email": st.session_state.user_email, "data_retorno": {"$gte": hoje}}).sort("data_retorno", 1))
         if agenda:
             for a in agenda:
                 with st.expander(f"📍 {a['cliente_nome']} - {a['data_retorno'].strftime('%d/%m/%Y')}"):
-                    st.write(f"**Última Obs:** {a['observacoes']}")
-                    st.write(f"**Endereço:** {a['endereco']}")
-        else:
-            st.info("Sua agenda está livre por enquanto.")
+                    st.write(f"**Obs:** {a['observacoes']}")
+        else: st.info("Sua agenda está livre.")
 
     with menu[2]:
-        st.subheader("🕰️ Meu Histórico Recente")
+        st.subheader("🕰️ Meu Histórico")
         meus = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(30))
-        
-        if meus:
-            for item in meus:
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns([3, 2, 1])
-                    c1.write(f"**{item['cliente_nome']}**")
-                    c2.write(f"📅 {item['data_hora'].strftime('%d/%m - %H:%M')}")
-                    
-                    # Funcionalidade de Exclusão com confirmação
-                    with c3:
-                        with st.popover("🗑️"):
-                            st.warning("Excluir?")
-                            if st.button("Sim, apagar", key=f"del_{item['_id']}", type="primary"):
-                                visits_col.delete_one({"_id": item['_id']})
-                                st.rerun()
-                    st.caption(f"Status: {item['status']} | Local: {item.get('endereco', 'N/A')}")
-        else:
-            st.write("Nenhum atendimento realizado ainda.")
+        for item in meus:
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 2, 1])
+                c1.write(f"**{item['cliente_nome']}**")
+                c2.write(f"📅 {item['data_hora'].strftime('%d/%m - %H:%M')}")
+                with c3:
+                    with st.popover("🗑️"):
+                        if st.button("Confirmar Exclusão", key=f"del_{item['_id']}", type="primary"):
+                            visits_col.delete_one({"_id": item['_id']})
+                            st.rerun()
+
+    # NOVA ABA: ALTERAR PRÓPRIA SENHA
+    with menu[3]:
+        st.subheader("🔐 Segurança da Conta")
+        with st.form("alterar_senha_form"):
+            nova_senha = st.text_input("Nova Senha", type="password")
+            confirmar_senha = st.text_input("Confirmar Nova Senha", type="password")
+            
+            if st.form_submit_button("Atualizar Minha Senha", type="primary"):
+                if len(nova_senha) < 4:
+                    st.error("A senha deve ter pelo menos 4 caracteres.")
+                elif nova_senha != confirmar_senha:
+                    st.error("As senhas não conferem.")
+                else:
+                    users_col.update_one(
+                        {"email": st.session_state.user_email},
+                        {"$set": {"senha": hash_pw(nova_senha)}}
+                    )
+                    st.success("Sua senha foi atualizada com sucesso!")
