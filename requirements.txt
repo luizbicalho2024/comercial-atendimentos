@@ -1,4 +1,5 @@
 streamlit
 pymongo
 pandas
+streamlit-geolocation
 geopy
