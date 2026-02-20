@@ -12,32 +12,24 @@ from geopy.exc import GeocoderTimedOut
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
 
 # ==========================================
-# CUSTOM CSS PARA MELHORAR O DESIGN
+# CONSTANTES DE CATEGORIZAÇÃO (STATUS)
 # ==========================================
-st.markdown("""
-    <style>
-    .gps-box {
-        background-color: #f8fbff;
-        border: 1px solid #cce0ff;
-        border-left: 5px solid #0052cc;
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        text-align: center;
-    }
-    .gps-title {
-        color: #0052cc;
-        font-weight: 700;
-        font-size: 18px;
-        margin-bottom: 8px;
-    }
-    .gps-desc {
-        font-size: 14px;
-        color: #555;
-        margin-bottom: 15px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+STATUS_OPCOES = [
+    "Venda Realizada", 
+    "Prospecção", 
+    "Retorno Agendado", 
+    "Cliente Ausente", 
+    "Outro"
+]
+
+COR_STATUS = {
+    "Venda Realizada": "#28a745",  # Verde
+    "Prospecção": "#0052cc",       # Azul (Primária)
+    "Retorno Agendado": "#fd7e14", # Laranja
+    "Cliente Ausente": "#dc3545",  # Vermelho
+    "Outro": "#6c757d",            # Cinza
+    "Não Informado": "#6c757d"
+}
 
 # ==========================================
 # CONFIGURAÇÃO DE BANCO DE DADOS E FUNÇÕES
@@ -146,22 +138,18 @@ def collaborator_page():
         st.markdown("### Novo Atendimento")
         with st.container(border=True):
             cliente_nome = st.text_input("Nome do Cliente *", placeholder="Ex: Mercado Silva")
+            
+            # Novo Campo: Categorização do Status
+            status_visita = st.selectbox("Resultado da Visita *", STATUS_OPCOES)
+            
             observacoes = st.text_area("Observações do Atendimento *", placeholder="Detalhes da visita...")
             
             st.divider()
             
-            # Painel Centralizado e Estilizado para o GPS
-            st.markdown("""
-                <div class="gps-box">
-                    <div class="gps-title">📍 Captura de Localização GPS</div>
-                    <div class="gps-desc">Clique no botão abaixo para capturar sua exata localização.</div>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Centraliza o botão na tela
-            col_space1, col_btn, col_space2 = st.columns([1, 2, 1])
-            with col_btn:
-                location = streamlit_geolocation()
+            # Layout simples do GPS (Versão aprovada)
+            st.markdown("#### 📍 Capturar Localização GPS *")
+            st.info("Clique no botão abaixo para capturar sua localização atual.")
+            location = streamlit_geolocation()
             
             endereco_atual = ""
             lat, lon = None, None
@@ -189,6 +177,7 @@ def collaborator_page():
                         "colaborador_email": st.session_state.user_email,
                         "colaborador_nome": st.session_state.user_name,
                         "cliente_nome": cliente_nome,
+                        "status": status_visita,
                         "observacoes": observacoes,
                         "latitude": lat,
                         "longitude": lon,
@@ -204,25 +193,29 @@ def collaborator_page():
         meus_atendimentos = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(50))
         
         if meus_atendimentos:
-            # Cabeçalho da Lista
-            hc1, hc2, hc3, hc4 = st.columns([2, 2, 3, 1])
+            hc1, hc2, hc3, hc4, hc5 = st.columns([2, 2, 2, 3, 1])
             hc1.write("**Data/Hora**")
             hc2.write("**Cliente**")
-            hc3.write("**Endereço**")
-            hc4.write("**Ação**")
+            hc3.write("**Status**")
+            hc4.write("**Endereço**")
+            hc5.write("**Ação**")
             st.divider()
             
             for item in meus_atendimentos:
-                c1, c2, c3, c4 = st.columns([2, 2, 3, 1])
+                c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 1])
                 c1.write(item['data_hora'].strftime('%d/%m/%Y %H:%M'))
                 c2.write(item['cliente_nome'])
-                c3.write(item.get('endereco', 'Endereço não registrado'))
                 
-                with c4:
-                    # Popover para confirmação de exclusão
-                    with st.popover("🗑️ Excluir"):
-                        st.write("Tem certeza que deseja apagar?")
-                        if st.button("Sim, apagar", key=f"del_{item['_id']}", type="primary"):
+                # Exibe o status (trata dados antigos que não tinham status)
+                status_texto = item.get('status', 'Não Informado')
+                c3.write(status_texto)
+                
+                c4.write(item.get('endereco', 'Endereço não registrado'))
+                
+                with c5:
+                    with st.popover("🗑️"):
+                        st.write("Tem certeza?")
+                        if st.button("Apagar", key=f"del_{item['_id']}", type="primary"):
                             visits_col.delete_one({"_id": item['_id']})
                             st.rerun()
                 st.markdown("---")
@@ -266,12 +259,27 @@ def admin_page():
             df = pd.DataFrame(atendimentos)
             df['Data/Hora'] = df['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
             
+            # Tratamento de dados antigos
             if 'endereco' not in df.columns:
                 df['endereco'] = "Endereço não registrado"
+            if 'status' not in df.columns:
+                df['status'] = "Não Informado"
                 
-            df = df[['Data/Hora', 'colaborador_nome', 'cliente_nome', 'observacoes', 'endereco', 'latitude', 'longitude']]
-            df.columns = ['Data/Hora', 'Colaborador', 'Cliente', 'Observações', 'Endereço', 'Lat', 'Lon']
+            df = df[['Data/Hora', 'colaborador_nome', 'cliente_nome', 'status', 'observacoes', 'endereco', 'latitude', 'longitude']]
+            df.columns = ['Data/Hora', 'Colaborador', 'Cliente', 'Status', 'Observações', 'Endereço', 'Lat', 'Lon']
+            
             st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Botão de Exportação para Excel (CSV)
+            st.markdown("<br>", unsafe_allow_html=True)
+            csv_data = df.to_csv(index=False, sep=";").encode('utf-8')
+            st.download_button(
+                label="📥 Baixar Dados Filtrados (Excel/CSV)",
+                data=csv_data,
+                file_name=f"relatorio_atendimentos_{datetime.now().strftime('%d%m%Y_%H%M')}.csv",
+                mime="text/csv",
+                type="primary"
+            )
         else:
             st.info("Nenhum atendimento encontrado para os filtros selecionados.")
 
@@ -283,6 +291,8 @@ def admin_page():
             st.warning("Não há dados suficientes para gerar os gráficos e mapa.")
         else:
             df_intel = pd.DataFrame(todos_dados)
+            if 'status' not in df_intel.columns:
+                df_intel['status'] = "Não Informado"
             
             col_sel, _ = st.columns([1, 2])
             with col_sel:
@@ -294,40 +304,58 @@ def admin_page():
             else:
                 df_mapa = df_intel
                 
+            # Mapa de Atendimentos com Cores Baseadas no Status
             st.subheader("📍 Mapa de Atendimentos Realizados")
+            st.caption("Verde = Venda | Azul = Prospecção | Laranja = Retorno | Vermelho = Ausente | Cinza = Outros")
+            
             if not df_mapa.empty and 'latitude' in df_mapa.columns and 'longitude' in df_mapa.columns:
-                map_data = df_mapa[['latitude', 'longitude']].dropna()
-                st.map(map_data, use_container_width=True)
+                # Cria a coluna de cor baseada no dicionário COR_STATUS
+                df_mapa['color'] = df_mapa['status'].map(COR_STATUS).fillna("#6c757d")
+                map_data = df_mapa[['latitude', 'longitude', 'color']].dropna(subset=['latitude', 'longitude'])
+                
+                # O st.map aceita uma coluna 'color' nativamente nas versões mais recentes
+                st.map(map_data, color="color", use_container_width=True)
             else:
                 st.info("Nenhuma coordenada válida para exibir no mapa.")
 
             st.divider()
             
-            st.subheader("📈 Desempenho e Comparativos")
+            # Ranking e KPIs
+            st.subheader("🏆 Ranking e Desempenho")
+            
             hoje = datetime.now()
             inicio_mes_atual = hoje.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            
             ultimo_dia_mes_anterior = inicio_mes_atual - timedelta(days=1)
             inicio_mes_anterior = ultimo_dia_mes_anterior.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
-            atendimentos_total = len(df_mapa)
+            # Filtrando apenas o mês atual para o Ranking
+            df_mes_atual = df_intel[df_intel['data_hora'] >= inicio_mes_atual]
             
-            mask_mes_atual = (df_mapa['data_hora'] >= inicio_mes_atual)
-            qtd_mes_atual = len(df_mapa[mask_mes_atual])
+            col_rank, col_kpis = st.columns([2, 1])
             
-            mask_mes_anterior = (df_mapa['data_hora'] >= inicio_mes_anterior) & (df_mapa['data_hora'] <= ultimo_dia_mes_anterior)
-            qtd_mes_anterior = len(df_mapa[mask_mes_anterior])
+            with col_rank:
+                st.markdown("**Top 5 Colaboradores (Este Mês)**")
+                if not df_mes_atual.empty:
+                    ranking = df_mes_atual['colaborador_nome'].value_counts().head(5).reset_index()
+                    ranking.columns = ['Colaborador', 'Atendimentos']
+                    st.bar_chart(ranking.set_index('Colaborador'), color="#0052cc", use_container_width=True)
+                else:
+                    st.info("Ainda não há atendimentos suficientes neste mês para formar o ranking.")
             
-            delta_mes = qtd_mes_atual - qtd_mes_anterior
-
-            col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-            col_kpi1.metric("Total Histórico", atendimentos_total)
-            col_kpi2.metric("Neste Mês", qtd_mes_atual, delta=delta_mes, delta_color="normal")
-            col_kpi3.metric("Mês Anterior", qtd_mes_anterior)
-            
-            dias_corridos = hoje.day
-            media_diaria = round(qtd_mes_atual / dias_corridos, 1) if dias_corridos > 0 else 0
-            col_kpi4.metric("Média Diária (Mês Atual)", media_diaria)
+            with col_kpis:
+                st.markdown("**Comparativo Geral**")
+                atendimentos_total = len(df_mapa)
+                qtd_mes_atual = len(df_mapa[df_mapa['data_hora'] >= inicio_mes_atual])
+                qtd_mes_anterior = len(df_mapa[(df_mapa['data_hora'] >= inicio_mes_anterior) & (df_mapa['data_hora'] <= ultimo_dia_mes_anterior)])
+                
+                delta_mes = qtd_mes_atual - qtd_mes_anterior
+                
+                st.metric("Total Histórico", atendimentos_total)
+                st.metric("Neste Mês", qtd_mes_atual, delta=delta_mes, delta_color="normal")
+                
+                dias_corridos = hoje.day
+                media_diaria = round(qtd_mes_atual / dias_corridos, 1) if dias_corridos > 0 else 0
+                st.metric("Média Diária (Mês Atual)", media_diaria)
 
     with tab3:
         st.header("Gestão de Colaboradores")
