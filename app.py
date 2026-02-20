@@ -12,6 +12,27 @@ from geopy.exc import GeocoderTimedOut
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
 
 # ==========================================
+# CUSTOM CSS PARA MELHORAR O DESIGN
+# ==========================================
+st.markdown("""
+    <style>
+    .gps-box {
+        background-color: #f0f8ff;
+        border-left: 5px solid #0052cc;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+    .gps-title {
+        color: #0052cc;
+        font-weight: bold;
+        font-size: 16px;
+        margin-bottom: 5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==========================================
 # CONFIGURAÇÃO DE BANCO DE DADOS E FUNÇÕES
 # ==========================================
 
@@ -117,21 +138,24 @@ def collaborator_page():
     with tab1:
         st.markdown("### Novo Atendimento")
         with st.container(border=True):
-            # Inputs obrigatórios
             cliente_nome = st.text_input("Nome do Cliente *", placeholder="Ex: Mercado Silva")
             observacoes = st.text_area("Observações do Atendimento *", placeholder="Detalhes da visita...")
             
             st.divider()
-            st.markdown("#### 📍 Capturar Localização GPS *")
-            st.info("Clique no botão abaixo para capturar sua localização atual. Aguarde o carregamento.")
             
-            # Componente de GPS
+            # Painel estilizado para o GPS
+            st.markdown("""
+                <div class="gps-box">
+                    <div class="gps-title">📍 Captura de Localização (Obrigatório)</div>
+                    <span style="font-size: 14px; color: #555;">Clique no botão abaixo pelo seu smartphone para capturar as coordenadas reais do GPS.</span>
+                </div>
+            """, unsafe_allow_html=True)
+            
             location = streamlit_geolocation()
             
             endereco_atual = ""
             lat, lon = None, None
             
-            # Mostra dados após captura
             if location and 'latitude' in location and location['latitude'] is not None:
                 lat = location['latitude']
                 lon = location['longitude']
@@ -149,7 +173,7 @@ def collaborator_page():
                 elif not observacoes.strip():
                     st.error("O campo 'Observações' é obrigatório.")
                 elif not lat or not lon:
-                    st.error("É obrigatório capturar a localização do GPS antes de registrar.")
+                    st.error("É obrigatório capturar a localização no botão acima antes de registrar o atendimento.")
                 else:
                     novo_atendimento = {
                         "colaborador_email": st.session_state.user_email,
@@ -172,6 +196,11 @@ def collaborator_page():
         if meus_atendimentos:
             df_meus = pd.DataFrame(meus_atendimentos)
             df_meus['Data/Hora'] = df_meus['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
+            
+            # Trava de segurança para dados antigos (previne o KeyError)
+            if 'endereco' not in df_meus.columns:
+                df_meus['endereco'] = "Endereço não registrado"
+                
             df_meus = df_meus[['Data/Hora', 'cliente_nome', 'observacoes', 'endereco']]
             df_meus.columns = ['Data/Hora', 'Cliente', 'Observações', 'Endereço']
             st.dataframe(df_meus, use_container_width=True, hide_index=True)
@@ -214,7 +243,7 @@ def admin_page():
         if atendimentos:
             df = pd.DataFrame(atendimentos)
             df['Data/Hora'] = df['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
-            # Verifica se a coluna endereco existe (para registros antigos)
+            
             if 'endereco' not in df.columns:
                 df['endereco'] = "Endereço não registrado"
                 
@@ -227,29 +256,24 @@ def admin_page():
     with tab2:
         st.header("Inteligência e KPIs")
         
-        # Carrega todos os dados para análise
         todos_dados = list(visits_col.find())
         if not todos_dados:
             st.warning("Não há dados suficientes para gerar os gráficos e mapa.")
         else:
             df_intel = pd.DataFrame(todos_dados)
             
-            # Filtro por colaborador para o mapa
             col_sel, _ = st.columns([1, 2])
             with col_sel:
                 lista_intel = ["Todos da Equipe"] + list(df_intel['colaborador_nome'].unique())
                 colab_selecionado = st.selectbox("Analisar Colaborador (Mapa)", lista_intel)
             
-            # Filtra DF para o mapa
             if colab_selecionado != "Todos da Equipe":
                 df_mapa = df_intel[df_intel['colaborador_nome'] == colab_selecionado]
             else:
                 df_mapa = df_intel
                 
-            # Mapa de calor/pontos
             st.subheader("📍 Mapa de Atendimentos Realizados")
             if not df_mapa.empty and 'latitude' in df_mapa.columns and 'longitude' in df_mapa.columns:
-                # O st.map precisa exatamente das colunas 'lat' e 'lon' ou 'latitude' e 'longitude'
                 map_data = df_mapa[['latitude', 'longitude']].dropna()
                 st.map(map_data, use_container_width=True)
             else:
@@ -257,27 +281,21 @@ def admin_page():
 
             st.divider()
             
-            # Cálculos de KPIs de Períodos
             st.subheader("📈 Desempenho e Comparativos")
             hoje = datetime.now()
             inicio_mes_atual = hoje.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
-            # Calcula o início e fim do mês anterior
             ultimo_dia_mes_anterior = inicio_mes_atual - timedelta(days=1)
             inicio_mes_anterior = ultimo_dia_mes_anterior.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
-            # Atendimentos Totais do Colaborador (ou Todos)
             atendimentos_total = len(df_mapa)
             
-            # Atendimentos Mês Atual
             mask_mes_atual = (df_mapa['data_hora'] >= inicio_mes_atual)
             qtd_mes_atual = len(df_mapa[mask_mes_atual])
             
-            # Atendimentos Mês Anterior
             mask_mes_anterior = (df_mapa['data_hora'] >= inicio_mes_anterior) & (df_mapa['data_hora'] <= ultimo_dia_mes_anterior)
             qtd_mes_anterior = len(df_mapa[mask_mes_anterior])
             
-            # Calcula a variação
             delta_mes = qtd_mes_atual - qtd_mes_anterior
 
             col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
@@ -285,7 +303,6 @@ def admin_page():
             col_kpi2.metric("Neste Mês", qtd_mes_atual, delta=delta_mes, delta_color="normal")
             col_kpi3.metric("Mês Anterior", qtd_mes_anterior)
             
-            # Média diária do mês atual
             dias_corridos = hoje.day
             media_diaria = round(qtd_mes_atual / dias_corridos, 1) if dias_corridos > 0 else 0
             col_kpi4.metric("Média Diária (Mês Atual)", media_diaria)
