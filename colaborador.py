@@ -1,15 +1,33 @@
 import streamlit as st
 from database import visits_col, users_col, get_address, hash_pw
 from streamlit_geolocation import streamlit_geolocation
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
+
+# Cores consistentes com a visão do gestor
+COR_STATUS = {
+    "Venda Realizada": "#28a745", 
+    "Prospecção": "#0052cc", 
+    "Retorno Agendado": "#fd7e14", 
+    "Cliente Ausente": "#dc3545", 
+    "Outro": "#6c757d"
+}
 
 def render_colaborador():
     st.title(f"🚀 Painel Comercial: {st.session_state.user_name}")
-    menu = st.tabs(["📝 Novo Atendimento", "🗓️ Minha Agenda", "🕰️ Meu Histórico", "🔐 Segurança"])
+    
+    # Abas atualizadas com Histórico Filtrado e Mapa Pessoal
+    menu = st.tabs([
+        "📝 Novo Atendimento", 
+        "🗓️ Minha Agenda", 
+        "🕰️ Histórico Detalhado", 
+        "🗺️ Meu Mapa", 
+        "🔐 Segurança"
+    ])
     
     clientes_cadastrados = sorted(visits_col.distinct("cliente_nome"))
 
+    # 1. ABA: NOVO ATENDIMENTO
     with menu[0]:
         with st.container(border=True):
             st.markdown("### Registrar Visita")
@@ -19,7 +37,7 @@ def render_colaborador():
             )
             
             cliente_nome = st.text_input("Nome da Nova Empresa *") if cliente_selecionado == "+ Novo Cliente" else cliente_selecionado
-            status = st.selectbox("Resultado *", ["Venda Realizada", "Prospecção", "Retorno Agendado", "Cliente Ausente", "Outro"])
+            status = st.selectbox("Resultado *", list(COR_STATUS.keys()))
             
             data_retorno = None
             if status == "Retorno Agendado":
@@ -59,55 +77,101 @@ def render_colaborador():
                     st.success("Atendimento registrado!")
                     st.rerun()
 
+    # 2. ABA: AGENDA DE RETORNOS
     with menu[1]:
         st.subheader("🗓️ Retornos Agendados")
         hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        agenda = list(visits_col.find({"colaborador_email": st.session_state.user_email, "data_retorno": {"$gte": hoje}}).sort("data_retorno", 1))
+        agenda = list(visits_col.find({
+            "colaborador_email": st.session_state.user_email, 
+            "data_retorno": {"$gte": hoje}
+        }).sort("data_retorno", 1))
+        
         if agenda:
             for a in agenda:
                 with st.expander(f"📌 {a['cliente_nome']} - Voltar em: {a['data_retorno'].strftime('%d/%m/%Y')}"):
-                    st.write(f"**Histórico da última visita:** {a['observacoes']}")
+                    st.write(f"**Obs:** {a['observacoes']}")
                     st.write(f"**Endereço:** {a.get('endereco', 'Não registrado')}")
         else: st.info("Sua agenda de retornos está livre.")
 
+    # 3. ABA: HISTÓRICO FILTRADO
     with menu[2]:
-        st.subheader("🕰️ Histórico Completo de Atendimentos")
-        meus = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(50))
+        st.subheader("🕰️ Histórico de Atendimentos")
+        
+        # Filtro de Período para o Histórico
+        periodo_h = st.selectbox("Filtrar Histórico por Período:", ["Todos", "Hoje", "Esta Semana", "Este Mês"], key="filtro_hist_colab")
+        
+        query_h = {"colaborador_email": st.session_state.user_email}
+        agora = datetime.now()
+        
+        if periodo_h == "Hoje":
+            query_h["data_hora"] = {"$gte": agora.replace(hour=0, minute=0, second=0)}
+        elif periodo_h == "Esta Semana":
+            query_h["data_hora"] = {"$gte": agora - timedelta(days=agora.weekday())}
+        elif periodo_h == "Este Mês":
+            query_h["data_hora"] = {"$gte": agora.replace(day=1, hour=0, minute=0, second=0)}
+
+        meus = list(visits_col.find(query_h).sort("data_hora", -1))
         
         if meus:
+            st.write(f"Exibindo **{len(meus)}** atendimentos.")
             for item in meus:
                 with st.container(border=True):
-                    header_col, action_col = st.columns([5, 1])
-                    
-                    with header_col:
+                    h_col, a_col = st.columns([5, 1])
+                    with h_col:
                         st.markdown(f"#### {item['cliente_nome']}")
                         st.caption(f"📅 {item['data_hora'].strftime('%d/%m/%Y às %H:%M')}")
-                    
-                    with action_col:
+                    with a_col:
                         with st.popover("🗑️"):
-                            st.warning("Apagar registro?")
-                            if st.button("Confirmar", key=f"del_{item['_id']}", type="primary"):
+                            if st.button("Apagar", key=f"del_{item['_id']}", type="primary"):
                                 visits_col.delete_one({"_id": item['_id']})
                                 st.rerun()
 
-                    # Dados Detalhados
-                    col_info1, col_info2 = st.columns(2)
-                    with col_info1:
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
                         st.write(f"**Status:** {item.get('status', 'N/A')}")
+                    with col_d2:
                         if item.get('data_retorno'):
-                            st.write(f"**📅 Retorno Agendado:** {item['data_retorno'].strftime('%d/%m/%Y')}")
+                            st.write(f"**📅 Retorno:** {item['data_retorno'].strftime('%d/%m/%Y')}")
                     
-                    with col_info2:
-                        st.write(f"**📍 Coordenadas:** `{item.get('latitude')}, {item.get('longitude')}`")
-                    
-                    st.write(f"**🏠 Endereço:** {item.get('endereco', 'Endereço não identificado')}")
-                    
-                    st.markdown("**📝 Observações:**")
-                    st.info(item.get('observacoes', 'Sem observações registradas.'))
+                    st.write(f"**🏠 Endereço:** {item.get('endereco', 'Não identificado')}")
+                    st.info(item.get('observacoes', 'Sem observações.'))
         else:
-            st.info("Você ainda não possui atendimentos registrados no sistema.")
+            st.info("Nenhum atendimento encontrado para o período selecionado.")
 
+    # 4. ABA: MEU MAPA PESSOAL (Nova funcionalidade)
     with menu[3]:
+        st.subheader("🗺️ Mapa das Minhas Visitas")
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            periodo_m = st.selectbox("Período do Mapa:", ["Todos", "Hoje", "Esta Semana", "Este Mês"], key="map_period")
+        with col_f2:
+            status_m = st.multiselect("Status no Mapa:", list(COR_STATUS.keys()), default=list(COR_STATUS.keys()), key="map_status")
+            
+        query_m = {
+            "colaborador_email": st.session_state.user_email,
+            "status": {"$in": status_m}
+        }
+        
+        if periodo_m == "Hoje":
+            query_m["data_hora"] = {"$gte": agora.replace(hour=0, minute=0, second=0)}
+        elif periodo_m == "Esta Semana":
+            query_m["data_hora"] = {"$gte": agora - timedelta(days=agora.weekday())}
+        elif periodo_m == "Este Mês":
+            query_m["data_hora"] = {"$gte": agora.replace(day=1, hour=0, minute=0, second=0)}
+
+        dados_mapa = list(visits_col.find(query_m))
+        
+        if dados_mapa:
+            df_m = pd.DataFrame(dados_mapa)
+            df_m['color'] = df_m['status'].map(COR_STATUS)
+            st.map(df_m, color="color", size=25)
+            st.caption("Verde: Venda | Azul: Prospecção | Laranja: Retorno | Vermelho: Ausente")
+        else:
+            st.info("Nenhum dado para exibir no mapa com os filtros atuais.")
+
+    # 5. ABA: SEGURANÇA
+    with menu[4]:
         st.subheader("🔐 Segurança da Conta")
         with st.form("alterar_senha_form"):
             nova_senha = st.text_input("Nova Senha", type="password")
@@ -123,4 +187,4 @@ def render_colaborador():
                         {"email": st.session_state.user_email},
                         {"$set": {"senha": hash_pw(nova_senha)}}
                     )
-                    st.success("Sua senha foi atualizada com sucesso!")
+                    st.success("Sua senha foi atualizada!")
