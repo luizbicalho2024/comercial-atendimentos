@@ -1,4 +1,4 @@
-streamlit==1.32.0
-pymongo==4.6.2
-pandas==2.2.1
-streamlit-geolocation==1.0.0
+streamlit
+pymongo
+pandas
+streamlit-geolocation
