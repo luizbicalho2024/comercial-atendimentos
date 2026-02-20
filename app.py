@@ -17,17 +17,24 @@ st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wid
 st.markdown("""
     <style>
     .gps-box {
-        background-color: #f0f8ff;
+        background-color: #f8fbff;
+        border: 1px solid #cce0ff;
         border-left: 5px solid #0052cc;
-        padding: 15px;
-        border-radius: 5px;
-        margin-bottom: 20px;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        text-align: center;
     }
     .gps-title {
         color: #0052cc;
-        font-weight: bold;
-        font-size: 16px;
-        margin-bottom: 5px;
+        font-weight: 700;
+        font-size: 18px;
+        margin-bottom: 8px;
+    }
+    .gps-desc {
+        font-size: 14px;
+        color: #555;
+        margin-bottom: 15px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -143,15 +150,18 @@ def collaborator_page():
             
             st.divider()
             
-            # Painel estilizado para o GPS
+            # Painel Centralizado e Estilizado para o GPS
             st.markdown("""
                 <div class="gps-box">
-                    <div class="gps-title">📍 Captura de Localização (Obrigatório)</div>
-                    <span style="font-size: 14px; color: #555;">Clique no botão abaixo pelo seu smartphone para capturar as coordenadas reais do GPS.</span>
+                    <div class="gps-title">📍 Captura de Localização GPS</div>
+                    <div class="gps-desc">Clique no botão abaixo para capturar sua exata localização.</div>
                 </div>
             """, unsafe_allow_html=True)
             
-            location = streamlit_geolocation()
+            # Centraliza o botão na tela
+            col_space1, col_btn, col_space2 = st.columns([1, 2, 1])
+            with col_btn:
+                location = streamlit_geolocation()
             
             endereco_atual = ""
             lat, lon = None, None
@@ -194,16 +204,28 @@ def collaborator_page():
         meus_atendimentos = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(50))
         
         if meus_atendimentos:
-            df_meus = pd.DataFrame(meus_atendimentos)
-            df_meus['Data/Hora'] = df_meus['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
+            # Cabeçalho da Lista
+            hc1, hc2, hc3, hc4 = st.columns([2, 2, 3, 1])
+            hc1.write("**Data/Hora**")
+            hc2.write("**Cliente**")
+            hc3.write("**Endereço**")
+            hc4.write("**Ação**")
+            st.divider()
             
-            # Trava de segurança para dados antigos (previne o KeyError)
-            if 'endereco' not in df_meus.columns:
-                df_meus['endereco'] = "Endereço não registrado"
+            for item in meus_atendimentos:
+                c1, c2, c3, c4 = st.columns([2, 2, 3, 1])
+                c1.write(item['data_hora'].strftime('%d/%m/%Y %H:%M'))
+                c2.write(item['cliente_nome'])
+                c3.write(item.get('endereco', 'Endereço não registrado'))
                 
-            df_meus = df_meus[['Data/Hora', 'cliente_nome', 'observacoes', 'endereco']]
-            df_meus.columns = ['Data/Hora', 'Cliente', 'Observações', 'Endereço']
-            st.dataframe(df_meus, use_container_width=True, hide_index=True)
+                with c4:
+                    # Popover para confirmação de exclusão
+                    with st.popover("🗑️ Excluir"):
+                        st.write("Tem certeza que deseja apagar?")
+                        if st.button("Sim, apagar", key=f"del_{item['_id']}", type="primary"):
+                            visits_col.delete_one({"_id": item['_id']})
+                            st.rerun()
+                st.markdown("---")
         else:
             st.info("Você ainda não possui atendimentos registrados.")
 
