@@ -12,29 +12,47 @@ from geopy.exc import GeocoderTimedOut
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
 
 # ==========================================
-# CUSTOM CSS PARA MELHORAR O DESIGN
+# CUSTOM CSS PARA MELHORAR O DESIGN DO GPS E TEMA
 # ==========================================
 st.markdown("""
     <style>
-    .gps-box {
-        background-color: #f8fbff;
-        border: 1px solid #cce0ff;
-        border-left: 5px solid #0052cc;
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        text-align: center;
+    /* Estilo do Card Moderno do GPS */
+    .gps-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #e6f0ff 0%, #ffffff 100%);
+        border: 2px dashed #0052cc;
+        border-radius: 12px;
+        padding: 30px 20px 40px 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0, 82, 204, 0.08);
+        transition: all 0.3s ease;
+    }
+    .gps-container:hover {
+        border-color: #003d99;
+        box-shadow: 0 6px 20px rgba(0, 82, 204, 0.15);
     }
     .gps-title {
         color: #0052cc;
-        font-weight: 700;
-        font-size: 18px;
-        margin-bottom: 8px;
+        font-weight: 800;
+        font-size: 20px;
+        margin-bottom: 10px;
+        text-align: center;
     }
     .gps-desc {
-        font-size: 14px;
+        font-size: 15px;
         color: #555;
-        margin-bottom: 15px;
+        margin-bottom: 25px;
+        text-align: center;
+        max-width: 80%;
+    }
+    /* Aumenta o tamanho do botão do plugin para facilitar o toque no celular */
+    iframe[title="streamlit_geolocation.streamlit_geolocation"] {
+        transform: scale(1.4);
+        transform-origin: top center;
+        height: 45px !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -150,18 +168,21 @@ def collaborator_page():
             
             st.divider()
             
-            # Painel Centralizado e Estilizado para o GPS
+            # Painel Centralizado e Super Estilizado para o GPS
             st.markdown("""
-                <div class="gps-box">
+                <div class="gps-container">
                     <div class="gps-title">📍 Captura de Localização GPS</div>
-                    <div class="gps-desc">Clique no botão abaixo para capturar sua exata localização.</div>
+                    <div class="gps-desc">Toque no ícone abaixo para confirmar sua localização exata no momento deste atendimento.</div>
                 </div>
             """, unsafe_allow_html=True)
             
-            # Centraliza o botão na tela
-            col_space1, col_btn, col_space2 = st.columns([1, 2, 1])
+            # Ajuste das colunas para centralizar perfeitamente o iframe com o zoom aplicado
+            col_space1, col_btn, col_space2 = st.columns([3, 1, 3])
             with col_btn:
+                # Movemos o iframe ligeiramente para cima via CSS embutido para casar com o design
+                st.markdown('<div style="margin-top: -65px; margin-bottom: 20px; text-align: center;">', unsafe_allow_html=True)
                 location = streamlit_geolocation()
+                st.markdown('</div>', unsafe_allow_html=True)
             
             endereco_atual = ""
             lat, lon = None, None
@@ -204,7 +225,6 @@ def collaborator_page():
         meus_atendimentos = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(50))
         
         if meus_atendimentos:
-            # Cabeçalho da Lista
             hc1, hc2, hc3, hc4 = st.columns([2, 2, 3, 1])
             hc1.write("**Data/Hora**")
             hc2.write("**Cliente**")
@@ -219,7 +239,6 @@ def collaborator_page():
                 c3.write(item.get('endereco', 'Endereço não registrado'))
                 
                 with c4:
-                    # Popover para confirmação de exclusão
                     with st.popover("🗑️ Excluir"):
                         st.write("Tem certeza que deseja apagar?")
                         if st.button("Sim, apagar", key=f"del_{item['_id']}", type="primary"):
