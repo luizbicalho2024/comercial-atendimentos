@@ -16,7 +16,6 @@ COR_STATUS = {
 def render_colaborador():
     st.title(f"🚀 Painel Comercial: {st.session_state.user_name}")
     
-    # Abas atualizadas com Histórico Filtrado e Mapa Pessoal
     menu = st.tabs([
         "📝 Novo Atendimento", 
         "🗓️ Minha Agenda", 
@@ -25,18 +24,40 @@ def render_colaborador():
         "🔐 Segurança"
     ])
     
+    # Busca lista de clientes para a lógica de busca
     clientes_cadastrados = sorted(visits_col.distinct("cliente_nome"))
 
     # 1. ABA: NOVO ATENDIMENTO
     with menu[0]:
         with st.container(border=True):
             st.markdown("### Registrar Visita")
-            cliente_selecionado = st.selectbox(
-                "Pesquisar Cliente", 
-                options=["+ Novo Cliente"] + clientes_cadastrados
-            )
             
-            cliente_nome = st.text_input("Nome da Nova Empresa *") if cliente_selecionado == "+ Novo Cliente" else cliente_selecionado
+            # Lógica de Pesquisa de Cliente com Autocompletar
+            search_term = st.text_input("Digite o nome do cliente para pesquisar *", placeholder="Ex: Mercado Silva")
+            
+            cliente_nome = ""
+            if search_term:
+                # Filtra a lista de clientes cadastrados com base no que foi digitado
+                sugestoes = [c for c in clientes_cadastrados if search_term.lower() in c.lower()]
+                
+                if sugestoes:
+                    # Se encontrar nomes parecidos, dá a opção de selecionar ou manter o que digitou
+                    if search_term in sugestoes:
+                        cliente_nome = search_term
+                        st.success(f"✅ Cliente selecionado: **{cliente_nome}**")
+                    else:
+                        cliente_selecionado = st.selectbox(
+                            "Clientes encontrados (Selecione um ou continue digitando se for novo):",
+                            options=["Usar nome digitado: " + search_term] + sugestoes
+                        )
+                        if "Usar nome digitado: " in cliente_selecionado:
+                            cliente_nome = search_term
+                        else:
+                            cliente_nome = cliente_selecionado
+                else:
+                    cliente_nome = search_term
+                    st.info(f"✨ Novo cliente detectado: **{cliente_nome}**")
+            
             status = st.selectbox("Resultado *", list(COR_STATUS.keys()))
             
             data_retorno = None
@@ -57,7 +78,8 @@ def render_colaborador():
                 else:
                     lat, lon = loc['latitude'], loc['longitude']
                     ender = get_address(lat, lon)
-                    st.success(f"✅ GPS Validado! | Lat: `{lat}` | Long: `{lon}`")
+                    st.success(f"✅ GPS Validado!")
+                    st.markdown(f"**Lat:** `{lat}` | **Long:** `{lon}`")
                     st.markdown(f"**Endereço:** {ender}")
 
             if st.button("Finalizar Registro", type="primary", use_container_width=True):
@@ -93,11 +115,10 @@ def render_colaborador():
                     st.write(f"**Endereço:** {a.get('endereco', 'Não registrado')}")
         else: st.info("Sua agenda de retornos está livre.")
 
-    # 3. ABA: HISTÓRICO FILTRADO
+    # 3. ABA: HISTÓRICO DETALHADO COM FILTROS
     with menu[2]:
         st.subheader("🕰️ Histórico de Atendimentos")
         
-        # Filtro de Período para o Histórico
         periodo_h = st.selectbox("Filtrar Histórico por Período:", ["Todos", "Hoje", "Esta Semana", "Este Mês"], key="filtro_hist_colab")
         
         query_h = {"colaborador_email": st.session_state.user_email}
@@ -129,6 +150,7 @@ def render_colaborador():
                     col_d1, col_d2 = st.columns(2)
                     with col_d1:
                         st.write(f"**Status:** {item.get('status', 'N/A')}")
+                        st.write(f"**📍 GPS:** `{item.get('latitude')}, {item.get('longitude')}`")
                     with col_d2:
                         if item.get('data_retorno'):
                             st.write(f"**📅 Retorno:** {item['data_retorno'].strftime('%d/%m/%Y')}")
@@ -138,7 +160,7 @@ def render_colaborador():
         else:
             st.info("Nenhum atendimento encontrado para o período selecionado.")
 
-    # 4. ABA: MEU MAPA PESSOAL (Nova funcionalidade)
+    # 4. ABA: MEU MAPA PESSOAL
     with menu[3]:
         st.subheader("🗺️ Mapa das Minhas Visitas")
         
@@ -166,9 +188,8 @@ def render_colaborador():
             df_m = pd.DataFrame(dados_mapa)
             df_m['color'] = df_m['status'].map(COR_STATUS)
             st.map(df_m, color="color", size=25)
-            st.caption("Verde: Venda | Azul: Prospecção | Laranja: Retorno | Vermelho: Ausente")
         else:
-            st.info("Nenhum dado para exibir no mapa com os filtros atuais.")
+            st.info("Nenhum dado para exibir no mapa.")
 
     # 5. ABA: SEGURANÇA
     with menu[4]:
