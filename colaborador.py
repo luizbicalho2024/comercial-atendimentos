@@ -2,10 +2,10 @@ import streamlit as st
 from database import visits_col, users_col, get_address, hash_pw
 from streamlit_geolocation import streamlit_geolocation
 from datetime import datetime
+import pandas as pd
 
 def render_colaborador():
     st.title(f"🚀 Painel Comercial: {st.session_state.user_name}")
-    # Adicionada aba de Segurança
     menu = st.tabs(["📝 Novo Atendimento", "🗓️ Minha Agenda", "🕰️ Meu Histórico", "🔐 Segurança"])
     
     clientes_cadastrados = sorted(visits_col.distinct("cliente_nome"))
@@ -65,25 +65,48 @@ def render_colaborador():
         agenda = list(visits_col.find({"colaborador_email": st.session_state.user_email, "data_retorno": {"$gte": hoje}}).sort("data_retorno", 1))
         if agenda:
             for a in agenda:
-                with st.expander(f"📍 {a['cliente_nome']} - {a['data_retorno'].strftime('%d/%m/%Y')}"):
-                    st.write(f"**Obs:** {a['observacoes']}")
-        else: st.info("Sua agenda está livre.")
+                with st.expander(f"📌 {a['cliente_nome']} - Voltar em: {a['data_retorno'].strftime('%d/%m/%Y')}"):
+                    st.write(f"**Histórico da última visita:** {a['observacoes']}")
+                    st.write(f"**Endereço:** {a.get('endereco', 'Não registrado')}")
+        else: st.info("Sua agenda de retornos está livre.")
 
     with menu[2]:
-        st.subheader("🕰️ Meu Histórico")
-        meus = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(30))
-        for item in meus:
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 2, 1])
-                c1.write(f"**{item['cliente_nome']}**")
-                c2.write(f"📅 {item['data_hora'].strftime('%d/%m - %H:%M')}")
-                with c3:
-                    with st.popover("🗑️"):
-                        if st.button("Confirmar Exclusão", key=f"del_{item['_id']}", type="primary"):
-                            visits_col.delete_one({"_id": item['_id']})
-                            st.rerun()
+        st.subheader("🕰️ Histórico Completo de Atendimentos")
+        meus = list(visits_col.find({"colaborador_email": st.session_state.user_email}).sort("data_hora", -1).limit(50))
+        
+        if meus:
+            for item in meus:
+                with st.container(border=True):
+                    header_col, action_col = st.columns([5, 1])
+                    
+                    with header_col:
+                        st.markdown(f"#### {item['cliente_nome']}")
+                        st.caption(f"📅 {item['data_hora'].strftime('%d/%m/%Y às %H:%M')}")
+                    
+                    with action_col:
+                        with st.popover("🗑️"):
+                            st.warning("Apagar registro?")
+                            if st.button("Confirmar", key=f"del_{item['_id']}", type="primary"):
+                                visits_col.delete_one({"_id": item['_id']})
+                                st.rerun()
 
-    # NOVA ABA: ALTERAR PRÓPRIA SENHA
+                    # Dados Detalhados
+                    col_info1, col_info2 = st.columns(2)
+                    with col_info1:
+                        st.write(f"**Status:** {item.get('status', 'N/A')}")
+                        if item.get('data_retorno'):
+                            st.write(f"**📅 Retorno Agendado:** {item['data_retorno'].strftime('%d/%m/%Y')}")
+                    
+                    with col_info2:
+                        st.write(f"**📍 Coordenadas:** `{item.get('latitude')}, {item.get('longitude')}`")
+                    
+                    st.write(f"**🏠 Endereço:** {item.get('endereco', 'Endereço não identificado')}")
+                    
+                    st.markdown("**📝 Observações:**")
+                    st.info(item.get('observacoes', 'Sem observações registradas.'))
+        else:
+            st.info("Você ainda não possui atendimentos registrados no sistema.")
+
     with menu[3]:
         st.subheader("🔐 Segurança da Conta")
         with st.form("alterar_senha_form"):
