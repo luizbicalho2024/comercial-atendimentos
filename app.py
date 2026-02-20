@@ -12,96 +12,12 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
 
 # ==========================================
-# CRIAÇÃO DO COMPONENTE NATIVO DE GPS DE ALTA PRECISÃO
+# IMPORTAÇÃO DO COMPONENTE NATIVO DE GPS (PASTA FÍSICA)
 # ==========================================
-GPS_DIR = "gps_high_accuracy"
-if not os.path.exists(GPS_DIR):
-    os.makedirs(GPS_DIR)
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/streamlit-component-lib/1.3.0/streamlit.js"></script>
-        <style>
-            body { margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; }
-            button { background-color: #0052cc; color: white; border: none; padding: 12px 20px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-            button:disabled { background-color: #99bbff; cursor: not-allowed; box-shadow: none; }
-            button:active { transform: translateY(2px); box-shadow: none; }
-            #msg { font-size: 14px; margin-top: 12px; text-align: center; font-weight: 600; padding: 0 10px; }
-            .error { color: #dc3545; }
-            .success { color: #28a745; }
-        </style>
-    </head>
-    <body>
-        <button id="btn">📍 Capturar Localização Exata</button>
-        <div id="msg"></div>
-        <script>
-            function init() { Streamlit.setFrameHeight(100); }
-            Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, init);
-            Streamlit.setComponentReady();
-
-            document.getElementById('btn').addEventListener('click', function() {
-                const btn = document.getElementById('btn');
-                const msg = document.getElementById('msg');
-                btn.innerText = "⏳ Buscando sinal de Satélite...";
-                btn.disabled = true;
-                msg.className = "";
-                msg.innerText = "";
-                
-                if (!navigator.geolocation) {
-                    msg.innerText = "Seu navegador não suporta GPS.";
-                    msg.className = "error";
-                    btn.innerText = "📍 Tentar Novamente";
-                    btn.disabled = false;
-                    return;
-                }
-
-                // Força o GPS do hardware
-                const options = { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 };
-
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        const acc = position.coords.accuracy;
-                        // Se a margem de erro for maior que 150m, rejeita e pede para ir pra rua
-                        if (acc > 150) { 
-                            msg.innerText = "Sinal fraco (Erro de " + Math.round(acc) + "m). Vá para um local aberto (rua) e tente de novo.";
-                            msg.className = "error";
-                            btn.innerText = "📍 Tentar Novamente";
-                            btn.disabled = false;
-                            Streamlit.setComponentValue(null);
-                        } else {
-                            msg.innerText = "✅ GPS Exato Encontrado (Erro máx: " + Math.round(acc) + "m).";
-                            msg.className = "success";
-                            btn.innerText = "Localização Capturada";
-                            Streamlit.setComponentValue({
-                                latitude: position.coords.latitude,
-                                longitude: position.coords.longitude,
-                                accuracy: position.coords.accuracy
-                            });
-                        }
-                    },
-                    function(error) {
-                        let err_txt = "Erro ao buscar GPS.";
-                        if(error.code == 1) err_txt = "Permissão de localização foi negada.";
-                        if(error.code == 2) err_txt = "Sinal de satélite indisponível no momento.";
-                        if(error.code == 3) err_txt = "Tempo esgotado. Verifique sua conexão/sinal.";
-                        msg.innerText = err_txt;
-                        msg.className = "error";
-                        btn.innerText = "📍 Tentar Novamente";
-                        btn.disabled = false;
-                        Streamlit.setComponentValue(null);
-                    },
-                    options
-                );
-            });
-        </script>
-    </body>
-    </html>
-    """
-    with open(os.path.join(GPS_DIR, "index.html"), "w", encoding="utf-8") as f:
-        f.write(html_content)
-
-custom_gps = components.declare_component("custom_gps", path=GPS_DIR)
+# Pega o caminho absoluto para evitar erros de leitura do Streamlit Cloud
+parent_dir = os.path.dirname(os.path.abspath(__file__))
+gps_path = os.path.join(parent_dir, "gps_component")
+custom_gps = components.declare_component("custom_gps", path=gps_path)
 
 # ==========================================
 # CONSTANTES DE CATEGORIZAÇÃO (STATUS)
@@ -238,13 +154,12 @@ def collaborator_page():
             st.markdown("#### 📍 Capturar Localização GPS *")
             st.info("O sistema exige precisão máxima para garantir que o atendimento ocorreu no local.")
             
-            # Chama o componente nativo criado
+            # Chama o componente nativo puxando da pasta
             location_data = custom_gps(key="gps_btn")
             
             endereco_atual = ""
             lat, lon = None, None
             
-            # Valida o retorno do componente
             if location_data and 'latitude' in location_data:
                 lat = location_data['latitude']
                 lon = location_data['longitude']
