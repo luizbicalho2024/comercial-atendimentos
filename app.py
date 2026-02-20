@@ -3,21 +3,13 @@ import pymongo
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
+from streamlit_geolocation import streamlit_geolocation
 import os
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
-import streamlit.components.v1 as components
 
 # Configuração da página (deve ser a primeira chamada)
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
-
-# ==========================================
-# IMPORTAÇÃO DO COMPONENTE NATIVO DE GPS (PASTA FÍSICA)
-# ==========================================
-# Pega o caminho absoluto para evitar erros de leitura do Streamlit Cloud
-parent_dir = os.path.dirname(os.path.abspath(__file__))
-gps_path = os.path.join(parent_dir, "gps_component")
-custom_gps = components.declare_component("custom_gps", path=gps_path)
 
 # ==========================================
 # CONSTANTES DE CATEGORIZAÇÃO (STATUS)
@@ -152,22 +144,31 @@ def collaborator_page():
             st.divider()
             
             st.markdown("#### 📍 Capturar Localização GPS *")
-            st.info("O sistema exige precisão máxima para garantir que o atendimento ocorreu no local.")
+            st.info("O sistema fará a validação da sua localização real pelo satélite.")
             
-            # Chama o componente nativo puxando da pasta
-            location_data = custom_gps(key="gps_btn")
+            location = streamlit_geolocation()
             
             endereco_atual = ""
             lat, lon = None, None
             
-            if location_data and 'latitude' in location_data:
-                lat = location_data['latitude']
-                lon = location_data['longitude']
-                endereco_atual = get_address(lat, lon)
+            if location and 'latitude' in location and location['latitude'] is not None:
+                # Captura a margem de erro dada pelo GPS (em metros)
+                acc = location.get('accuracy', 9999)
+                if acc is None:
+                    acc = 9999
                 
-                st.success("✅ Localização de alta precisão aprovada!")
-                st.markdown(f"**Coordenadas:** {lat}, {lon}")
-                st.markdown(f"**Endereço:** {endereco_atual}")
+                # Regra de ouro: Se o erro for maior que 150m, bloqueia e pede para refazer
+                if acc > 150:
+                    st.error(f"⚠️ Sinal GPS impreciso detectado (Margem de erro: {acc:.0f} metros).")
+                    st.warning("👉 O sistema identificou que esta localização não é exata. Por favor, vá para um local aberto (perto da porta ou na rua), aguarde o celular conectar ao satélite e clique no botão novamente.")
+                else:
+                    lat = location['latitude']
+                    lon = location['longitude']
+                    endereco_atual = get_address(lat, lon)
+                    
+                    st.success(f"✅ Localização exata validada! (Margem de erro de apenas {acc:.0f}m)")
+                    st.markdown(f"**Coordenadas:** {lat}, {lon}")
+                    st.markdown(f"**Endereço:** {endereco_atual}")
             
             st.markdown("<br>", unsafe_allow_html=True)
             
@@ -177,7 +178,7 @@ def collaborator_page():
                 elif not observacoes.strip():
                     st.error("O campo 'Observações' é obrigatório.")
                 elif not lat or not lon:
-                    st.error("É obrigatório capturar a localização exata no botão acima antes de registrar.")
+                    st.error("É obrigatório capturar a localização EXATA no botão acima antes de registrar.")
                 else:
                     novo_atendimento = {
                         "colaborador_email": st.session_state.user_email,
