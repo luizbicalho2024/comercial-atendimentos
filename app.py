@@ -3,13 +3,105 @@ import pymongo
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
-from streamlit_geolocation import streamlit_geolocation
 import os
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
+import streamlit.components.v1 as components
 
 # Configuração da página (deve ser a primeira chamada)
 st.set_page_config(page_title="Sistema Comercial", page_icon="📊", layout="wide")
+
+# ==========================================
+# CRIAÇÃO DO COMPONENTE NATIVO DE GPS DE ALTA PRECISÃO
+# ==========================================
+GPS_DIR = "gps_high_accuracy"
+if not os.path.exists(GPS_DIR):
+    os.makedirs(GPS_DIR)
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/streamlit-component-lib/1.3.0/streamlit.js"></script>
+        <style>
+            body { margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; }
+            button { background-color: #0052cc; color: white; border: none; padding: 12px 20px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            button:disabled { background-color: #99bbff; cursor: not-allowed; box-shadow: none; }
+            button:active { transform: translateY(2px); box-shadow: none; }
+            #msg { font-size: 14px; margin-top: 12px; text-align: center; font-weight: 600; padding: 0 10px; }
+            .error { color: #dc3545; }
+            .success { color: #28a745; }
+        </style>
+    </head>
+    <body>
+        <button id="btn">📍 Capturar Localização Exata</button>
+        <div id="msg"></div>
+        <script>
+            function init() { Streamlit.setFrameHeight(100); }
+            Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, init);
+            Streamlit.setComponentReady();
+
+            document.getElementById('btn').addEventListener('click', function() {
+                const btn = document.getElementById('btn');
+                const msg = document.getElementById('msg');
+                btn.innerText = "⏳ Buscando sinal de Satélite...";
+                btn.disabled = true;
+                msg.className = "";
+                msg.innerText = "";
+                
+                if (!navigator.geolocation) {
+                    msg.innerText = "Seu navegador não suporta GPS.";
+                    msg.className = "error";
+                    btn.innerText = "📍 Tentar Novamente";
+                    btn.disabled = false;
+                    return;
+                }
+
+                // Força o GPS do hardware
+                const options = { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 };
+
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const acc = position.coords.accuracy;
+                        // Se a margem de erro for maior que 150m, rejeita e pede para ir pra rua
+                        if (acc > 150) { 
+                            msg.innerText = "Sinal fraco (Erro de " + Math.round(acc) + "m). Vá para um local aberto (rua) e tente de novo.";
+                            msg.className = "error";
+                            btn.innerText = "📍 Tentar Novamente";
+                            btn.disabled = false;
+                            Streamlit.setComponentValue(null);
+                        } else {
+                            msg.innerText = "✅ GPS Exato Encontrado (Erro máx: " + Math.round(acc) + "m).";
+                            msg.className = "success";
+                            btn.innerText = "Localização Capturada";
+                            Streamlit.setComponentValue({
+                                latitude: position.coords.latitude,
+                                longitude: position.coords.longitude,
+                                accuracy: position.coords.accuracy
+                            });
+                        }
+                    },
+                    function(error) {
+                        let err_txt = "Erro ao buscar GPS.";
+                        if(error.code == 1) err_txt = "Permissão de localização foi negada.";
+                        if(error.code == 2) err_txt = "Sinal de satélite indisponível no momento.";
+                        if(error.code == 3) err_txt = "Tempo esgotado. Verifique sua conexão/sinal.";
+                        msg.innerText = err_txt;
+                        msg.className = "error";
+                        btn.innerText = "📍 Tentar Novamente";
+                        btn.disabled = false;
+                        Streamlit.setComponentValue(null);
+                    },
+                    options
+                );
+            });
+        </script>
+    </body>
+    </html>
+    """
+    with open(os.path.join(GPS_DIR, "index.html"), "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+custom_gps = components.declare_component("custom_gps", path=GPS_DIR)
 
 # ==========================================
 # CONSTANTES DE CATEGORIZAÇÃO (STATUS)
@@ -23,11 +115,11 @@ STATUS_OPCOES = [
 ]
 
 COR_STATUS = {
-    "Venda Realizada": "#28a745",  # Verde
-    "Prospecção": "#0052cc",       # Azul (Primária)
-    "Retorno Agendado": "#fd7e14", # Laranja
-    "Cliente Ausente": "#dc3545",  # Vermelho
-    "Outro": "#6c757d",            # Cinza
+    "Venda Realizada": "#28a745",
+    "Prospecção": "#0052cc",
+    "Retorno Agendado": "#fd7e14",
+    "Cliente Ausente": "#dc3545",
+    "Outro": "#6c757d",
     "Não Informado": "#6c757d"
 }
 
@@ -138,30 +230,29 @@ def collaborator_page():
         st.markdown("### Novo Atendimento")
         with st.container(border=True):
             cliente_nome = st.text_input("Nome do Cliente *", placeholder="Ex: Mercado Silva")
-            
-            # Novo Campo: Categorização do Status
             status_visita = st.selectbox("Resultado da Visita *", STATUS_OPCOES)
-            
             observacoes = st.text_area("Observações do Atendimento *", placeholder="Detalhes da visita...")
             
             st.divider()
             
-            # Layout simples do GPS (Versão aprovada)
             st.markdown("#### 📍 Capturar Localização GPS *")
-            st.info("Clique no botão abaixo para capturar sua localização atual.")
-            location = streamlit_geolocation()
+            st.info("O sistema exige precisão máxima para garantir que o atendimento ocorreu no local.")
+            
+            # Chama o componente nativo criado
+            location_data = custom_gps(key="gps_btn")
             
             endereco_atual = ""
             lat, lon = None, None
             
-            if location and 'latitude' in location and location['latitude'] is not None:
-                lat = location['latitude']
-                lon = location['longitude']
+            # Valida o retorno do componente
+            if location_data and 'latitude' in location_data:
+                lat = location_data['latitude']
+                lon = location_data['longitude']
                 endereco_atual = get_address(lat, lon)
                 
-                st.success("✅ Localização capturada com sucesso!")
+                st.success("✅ Localização de alta precisão aprovada!")
                 st.markdown(f"**Coordenadas:** {lat}, {lon}")
-                st.markdown(f"**Endereço Aproximado:** {endereco_atual}")
+                st.markdown(f"**Endereço:** {endereco_atual}")
             
             st.markdown("<br>", unsafe_allow_html=True)
             
@@ -171,7 +262,7 @@ def collaborator_page():
                 elif not observacoes.strip():
                     st.error("O campo 'Observações' é obrigatório.")
                 elif not lat or not lon:
-                    st.error("É obrigatório capturar a localização no botão acima antes de registrar o atendimento.")
+                    st.error("É obrigatório capturar a localização exata no botão acima antes de registrar.")
                 else:
                     novo_atendimento = {
                         "colaborador_email": st.session_state.user_email,
@@ -206,10 +297,8 @@ def collaborator_page():
                 c1.write(item['data_hora'].strftime('%d/%m/%Y %H:%M'))
                 c2.write(item['cliente_nome'])
                 
-                # Exibe o status (trata dados antigos que não tinham status)
                 status_texto = item.get('status', 'Não Informado')
                 c3.write(status_texto)
-                
                 c4.write(item.get('endereco', 'Endereço não registrado'))
                 
                 with c5:
@@ -259,7 +348,6 @@ def admin_page():
             df = pd.DataFrame(atendimentos)
             df['Data/Hora'] = df['data_hora'].dt.strftime('%d/%m/%Y %H:%M')
             
-            # Tratamento de dados antigos
             if 'endereco' not in df.columns:
                 df['endereco'] = "Endereço não registrado"
             if 'status' not in df.columns:
@@ -270,7 +358,6 @@ def admin_page():
             
             st.dataframe(df, use_container_width=True, hide_index=True)
             
-            # Botão de Exportação para Excel (CSV)
             st.markdown("<br>", unsafe_allow_html=True)
             csv_data = df.to_csv(index=False, sep=";").encode('utf-8')
             st.download_button(
@@ -304,23 +391,18 @@ def admin_page():
             else:
                 df_mapa = df_intel
                 
-            # Mapa de Atendimentos com Cores Baseadas no Status
             st.subheader("📍 Mapa de Atendimentos Realizados")
             st.caption("Verde = Venda | Azul = Prospecção | Laranja = Retorno | Vermelho = Ausente | Cinza = Outros")
             
             if not df_mapa.empty and 'latitude' in df_mapa.columns and 'longitude' in df_mapa.columns:
-                # Cria a coluna de cor baseada no dicionário COR_STATUS
                 df_mapa['color'] = df_mapa['status'].map(COR_STATUS).fillna("#6c757d")
                 map_data = df_mapa[['latitude', 'longitude', 'color']].dropna(subset=['latitude', 'longitude'])
-                
-                # O st.map aceita uma coluna 'color' nativamente nas versões mais recentes
                 st.map(map_data, color="color", use_container_width=True)
             else:
                 st.info("Nenhuma coordenada válida para exibir no mapa.")
 
             st.divider()
             
-            # Ranking e KPIs
             st.subheader("🏆 Ranking e Desempenho")
             
             hoje = datetime.now()
@@ -328,7 +410,6 @@ def admin_page():
             ultimo_dia_mes_anterior = inicio_mes_atual - timedelta(days=1)
             inicio_mes_anterior = ultimo_dia_mes_anterior.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
-            # Filtrando apenas o mês atual para o Ranking
             df_mes_atual = df_intel[df_intel['data_hora'] >= inicio_mes_atual]
             
             col_rank, col_kpis = st.columns([2, 1])
